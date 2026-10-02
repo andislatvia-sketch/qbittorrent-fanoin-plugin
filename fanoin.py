@@ -1,4 +1,4 @@
-# VERSION: 1.05
+# VERSION: 1.06
 # AUTHORS: Grok, improved by andislatvia-sketch
 # LICENSING INFORMATION
 #
@@ -30,19 +30,28 @@
 qBittorrent Nova3 search plugin for FANO.IN
 https://www.fano.in/
 
-Fano.in is a Latvian private tracker. This plugin follows the official
-qBittorrent search-plugin contract and the Jackett indexer definition
-(src/Jackett.Common/Definitions/fanoin.yml):
+============================================================
+CHANGELOG
+============================================================
+v1.06 (2026-10-02)
+  - Fixed incorrect cell indexing (size, seeders, leechers)
+  - Real structure discovered via debug:
+      cells[3] = size   (e.g. "5.61 GB")
+      cells[5] = seeders
+      cells[6] = leechers
+  - Size is now correctly converted to bytes
+  - Leechers no longer show -1
 
-  login  POST  /takelogin.php          username, password
-  search GET   /browse_old.php         search, incldead=1, sort=4, type=desc, c<id>=1
-  rows         tr.browse_actions
-  title        a.tName[href^="details.php?id="]
-  download     download.php?id=
-  size         td (5th cell in row) - contains value<br>unit  → converted to bytes
-  seeders      td (7th cell - contains a link with seeder count)
-  leechers     td (8th cell)
-  date         small tag within title cell
+v1.05
+  - Added proper size-to-bytes conversion
+  - Improved handling of <br> and Latvian decimal comma
+
+v1.04 and earlier
+  - Initial working login + search
+  - Cookie persistence
+  - Category mapping
+  - Date parsing (Šodien / Vakar)
+============================================================
 
 Credentials — pick one:
   1. Edit USERNAME / PASSWORD below.
@@ -79,9 +88,6 @@ PASSWORD = "YOUR_PASSWORD"
 class fanoin:
     url = "https://www.fano.in"
     name = "FANO.IN"
-    # Values are Fano category IDs from Jackett (c<id>=1 on browse_old.php).
-    # Multiple IDs are comma-separated so a qBittorrent category maps 1:1 to
-    # the tracker groups Jackett uses for the same Newznab bucket.
     supported_categories: dict[str, str] = {
         "all": "all",
         "anime": "27",
@@ -98,7 +104,7 @@ class fanoin:
         "Gecko/20100101 Firefox/128.0"
     )
     _MAX_PAGES = 8
-    _MAX_ROW_LENGTH = 500_000  # Prevent ReDoS attacks
+    _MAX_ROW_LENGTH = 500_000
 
     def __init__(self) -> None:
         self.username = USERNAME
@@ -116,8 +122,6 @@ class fanoin:
             urllib.request.HTTPCookieProcessor(self.cj)
         )
         self.logged_in = False
-
-    # -- config / session ---------------------------------------------------
 
     def _load_config(self, path: str) -> None:
         if not os.path.isfile(path):
@@ -237,8 +241,6 @@ class fanoin:
         self._save_cookies()
         return True
 
-    # -- public nova3 API ---------------------------------------------------
-
     def download_torrent(self, info: str) -> None:
         if not self._ensure_login():
             return
@@ -297,7 +299,7 @@ class fanoin:
                 if not key or key in seen:
                     continue
                 seen.add(key)
-                prettyPrinter(item)  # type: ignore[arg-type]
+                prettyPrinter(item)
                 emitted += 1
             if emitted == 0:
                 break
@@ -320,14 +322,12 @@ _INT_RE = re.compile(r"-?\d+")
 
 
 def _strip_tags(blob: str) -> str:
-    """Remove HTML tags and unescape entities."""
     blob = _TAG_RE.sub(" ", blob)
     blob = html.unescape(blob)
     return re.sub(r"\s+", " ", blob).strip()
 
 
 def _to_int(blob: str) -> int:
-    """Extract integer from text, handling commas and spaces."""
     cleaned = blob.replace(",", "").replace(" ", "").replace("\n", "")
     match = _INT_RE.search(cleaned)
     if not match:
@@ -340,20 +340,18 @@ def _to_int(blob: str) -> int:
 
 def _size_to_bytes(blob: str) -> str:
     """
-    Convert FANO.IN size cell (e.g. "5.28<br>GB" or "1,98 GB") to bytes.
+    Convert size string (e.g. "5.61 GB", "1,48 GB", "5.28<br>GB") to bytes.
     Returns the size in bytes as a string (required by prettyPrinter).
     """
     if not blob:
         return "-1"
 
     text = html.unescape(blob)
-    # Join number and unit separated by <br>
     text = re.sub(r"<br\s*/?>", " ", text, flags=re.I)
     text = _TAG_RE.sub("", text)
     text = text.replace("\xa0", " ")
     text = re.sub(r"\s+", " ", text).strip()
 
-    # Match number (supports both . and , as decimal) + optional unit
     match = re.search(r"([\d.,]+)\s*([KMGT]?i?B)?", text, re.I)
     if not match:
         return "-1"
@@ -378,12 +376,10 @@ def _size_to_bytes(blob: str) -> str:
         "TIB": 1024 ** 4,
     }
 
-    size_bytes = int(value * multipliers.get(unit, 1))
-    return str(size_bytes)
+    return str(int(value * multipliers.get(unit, 1)))
 
 
 def parse_pub_date(raw: str) -> int:
-    """Parse Fano date strings (Šodien/Vakar/ISO) to a unix timestamp."""
     if not raw:
         return -1
     text = html.unescape(raw)
@@ -428,7 +424,6 @@ def parse_pub_date(raw: str) -> int:
 
 
 def _apply_time(day: datetime, clock: str) -> datetime:
-    """Apply time to a date."""
     parts = clock.split(":")
     hour = int(parts[0])
     minute = int(parts[1]) if len(parts) > 1 else 0
@@ -437,7 +432,6 @@ def _apply_time(day: datetime, clock: str) -> datetime:
 
 
 def parse_browse_rows(page_html: str, engine_url: str) -> list[dict[str, object]]:
-    """Extract search hits from a browse_old.php document."""
     results: list[dict[str, object]] = []
     for row_html in _ROW_RE.findall(page_html):
         item = parse_row(row_html, engine_url)
@@ -447,12 +441,9 @@ def parse_browse_rows(page_html: str, engine_url: str) -> list[dict[str, object]
 
 
 def parse_row(row_html: str, engine_url: str) -> Optional[dict[str, object]]:
-    """Parse a single torrent row from browse_actions table."""
-    # Prevent ReDoS: skip unusually long rows
     if len(row_html) > fanoin._MAX_ROW_LENGTH:
         return None
 
-    # Find the title using tName class
     title_match = _TNAME_RE.search(row_html)
     if not title_match:
         return None
@@ -462,35 +453,31 @@ def parse_row(row_html: str, engine_url: str) -> Optional[dict[str, object]]:
     if not name:
         return None
 
-    # Build links
     download = f"{engine_url}/download.php?id={torrent_id}"
     desc = f"{engine_url}/details.php?id={torrent_id}"
 
-    # Extract all table cells (<td> tags)
     cells = _TD_RE.findall(row_html)
 
-    # Structure in browse_actions rows:
-    # [0] = actions column
-    # [1] = title + date in small tags
-    # [2] = comments count
-    # [3] = rating image
-    # [4] = size (contains value<br>unit, e.g., "5.28<br>GB")
-    # [5] = views count
-    # [6] = seeders
-    # [7] = leechers
+    # Correct cell mapping (discovered via debug on 2026-10-02):
+    # [0] actions (often empty after stripping)
+    # [1] title + date
+    # [2] comments
+    # [3] size          ← "5.61 GB"
+    # [4] views         ← "544 reizes"
+    # [5] seeders
+    # [6] leechers
 
     size = "-1"
     seeds = -1
     leech = -1
 
-    if len(cells) >= 5:
-        size = _size_to_bytes(cells[4])
+    if len(cells) >= 4:
+        size = _size_to_bytes(cells[3])
+    if len(cells) >= 6:
+        seeds = _to_int(_strip_tags(cells[5]))
     if len(cells) >= 7:
-        seeds = _to_int(_strip_tags(cells[6]))
-    if len(cells) >= 8:
-        leech = _to_int(_strip_tags(cells[7]))
+        leech = _to_int(_strip_tags(cells[6]))
 
-    # Extract date from title cell (contains <small> tags)
     date_raw = ""
     if len(cells) > 1:
         smalls = [_strip_tags(s) for s in _SMALL_RE.findall(cells[1])]
