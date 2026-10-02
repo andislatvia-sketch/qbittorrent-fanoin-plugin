@@ -1,0 +1,70 @@
+To update the to the newest version, You can use this .bat script, just copy everything from "@echo off" till the end "pause".
+It will delete cookies and will replace old configuration file .json credentials (if provided will not be touched).
+
+@echo off
+setlocal enabledelayedexpansion
+
+set "ENGINES_FOLDER=%LOCALAPPDATA%\qBittorrent\nova3\engines"
+set "PLUGIN_URL=https://raw.githubusercontent.com/andislatvia-sketch/qbittorrent-fanoin-plugin/main/fanoin.py"
+set "PLUGIN_FILE=%ENGINES_FOLDER%\fanoin.py"
+set "BACKUP_FILE=%ENGINES_FOLDER%\fanoin.py.backup"
+set "COOKIES_FILE=%ENGINES_FOLDER%\fanoin.cookies"
+
+echo.
+echo ============================================
+echo FANO.IN Plugin Updater  v1.06
+echo ============================================
+echo.
+
+if not exist "%ENGINES_FOLDER%" (
+    echo ERROR: qBittorrent engines folder not found!
+    echo Expected: %ENGINES_FOLDER%
+    pause
+    exit /b 1
+)
+
+echo [1/5] Checking existing plugin...
+if exist "%PLUGIN_FILE%" (
+    echo [2/5] Creating backup...
+    copy "%PLUGIN_FILE%" "%BACKUP_FILE%" >nul
+    echo       Backup created: fanoin.py.backup
+) else (
+    echo [2/5] No existing plugin found - fresh install
+)
+
+echo [3/5] Downloading latest version from GitHub...
+powershell -Command "try { (New-Object Net.WebClient).DownloadFile('%PLUGIN_URL%', '%PLUGIN_FILE%'); exit 0 } catch { exit 1 }"
+
+if errorlevel 1 (
+    echo ERROR: Download failed!
+    if exist "%BACKUP_FILE%" (
+        echo Restoring backup...
+        copy "%BACKUP_FILE%" "%PLUGIN_FILE%" >nul
+    )
+    pause
+    exit /b 1
+)
+echo       Download successful
+
+echo [4/5] Removing old cookies...
+if exist "%COOKIES_FILE%" (
+    del "%COOKIES_FILE%"
+    echo       Cookies deleted
+) else (
+    echo       No cookies file found
+)
+
+echo [5/5] Done!
+echo.
+echo ============================================
+echo SUCCESS - Plugin updated to latest version
+echo ============================================
+echo.
+echo Location: %PLUGIN_FILE%
+echo.
+echo Next steps:
+echo   1. Close qBittorrent completely
+echo   2. Restart qBittorrent
+echo   3. Test a search
+echo.
+pause
