@@ -1,4 +1,4 @@
-# VERSION: 1.01
+# VERSION: 1.03
 # AUTHORS: Grok, improved by andislatvia-sketch
 # LICENSING INFORMATION
 #
@@ -37,12 +37,12 @@ qBittorrent search-plugin contract and the Jackett indexer definition
   login  POST  /takelogin.php          username, password
   search GET   /browse_old.php         search, incldead=1, sort=4, type=desc, c<id>=1
   rows         tr.browse_actions
-  title        a[href^="details.php?id="]
-  download     details.php -> download.php
-  size         td:nth-child(5)
-  seeders      td:nth-child(7)
-  leechers     td:nth-child(8)
-  date         td:nth-child(2) small (Šodien/Vakar)
+  title        a.tName[href^="details.php?id="]
+  download     download.php?id=
+  size         td (5th cell in row)
+  seeders      td (7th cell - contains a link with seeder count)
+  leechers     td (8th cell)
+  date         small tag within title cell
 
 Credentials — pick one:
   1. Edit USERNAME / PASSWORD below.
@@ -98,7 +98,7 @@ class fanoin:
         "Gecko/20100101 Firefox/128.0"
     )
     _MAX_PAGES = 8
-    _MAX_ROW_LENGTH = 100_000  # Prevent ReDoS attacks
+    _MAX_ROW_LENGTH = 500_000  # Prevent ReDoS attacks
 
     def __init__(self) -> None:
         self.username = USERNAME
@@ -303,18 +303,22 @@ class fanoin:
                 break
 
 
-# -- HTML parsing (Jackett fanoin.yml selectors) ----------------------------
+# -- HTML parsing ---------------------------------------------------
 
 _ROW_RE = re.compile(
-    r"<tr\b[^>]*class=['\"][^'\"]*\bbrowse_actions\b[^'\"]*['\"][^>]*>(.*?)</tr>",
+    r"<tr[^>]*class=['\"]browse_actions['\"][^>]*>(.*?)</tr>",
     re.I | re.S,
 )
-_TD_RE = re.compile(r"<td\b[^>]*>(.*?)</td>", re.I | re.S)
-_DETAILS_RE = re.compile(
-    r"""<a\b[^>]*href=['\"]details\.php\?id=\d+[^'\"]*['\"][^>]*>(.*?)</a>""",
+_TD_RE = re.compile(r"<td[^>]*>(.*?)</td>", re.I | re.S)
+_TNAME_RE = re.compile(
+    r"""<a\b[^>]*class=['\"]tName['\"][^>]*href=['\"]details\.php\?id=(\d+)[^'\"]*['\"][^>]*>(.*?)</a>""",
     re.I | re.S,
 )
-_SMALL_RE = re.compile(r"<small\b[^>]*>(.*?)</small>", re.I | re.S)
+_DOWNLOAD_RE = re.compile(
+    r"""<a\b[^>]*href=['\"]download\.php\?id=(\d+)[^'\"]*['\"][^>]*>""",
+    re.I | re.S,
+)
+_SMALL_RE = re.compile(r"<small[^>]*>(.*?)</small>", re.I | re.S)
 _TAG_RE = re.compile(r"<[^>]+>")
 _INT_RE = re.compile(r"-?\d+")
 
@@ -328,7 +332,7 @@ def _strip_tags(blob: str) -> str:
 
 def _to_int(blob: str) -> int:
     """Extract integer from text, handling commas and spaces."""
-    cleaned = blob.replace(",", "").replace(" ", "")
+    cleaned = blob.replace(",", "").replace(" ", "").replace("\n", "")
     match = _INT_RE.search(cleaned)
     if not match:
         return -1
@@ -380,6 +384,8 @@ def parse_pub_date(raw: str) -> int:
         "%Y/%m/%d %H:%M:%S",
         "%d.%m.%Y %H:%M:%S",
         "%d.%m.%Y %H:%M",
+        "%b %d %Y",
+        "%b&nbsp;%d&nbsp;%Y",
         "%Y-%m-%d",
         "%d-%m-%Y",
     )
@@ -411,33 +417,57 @@ def parse_browse_rows(page_html: str, engine_url: str) -> list[dict[str, object]
 
 
 def parse_row(row_html: str, engine_url: str) -> Optional[dict[str, object]]:
-    """Parse a single torrent row."""
+    """Parse a single torrent row from browse_actions table."""
     # Prevent ReDoS: skip unusually long rows
     if len(row_html) > fanoin._MAX_ROW_LENGTH:
         return None
 
-    details = _DETAILS_RE.search(row_html)
-    if not details:
+    # Find the title using tName class
+    title_match = _TNAME_RE.search(row_html)
+    if not title_match:
         return None
-    rel = html.unescape(details.group(1)).replace("&", "&")
-    desc = rel if rel.startswith("http") else f"{engine_url}/{rel.lstrip('/')}"
-    name = _strip_tags(details.group(2))
+
+    torrent_id = title_match.group(1)
+    name = _strip_tags(title_match.group(2))
     if not name:
         return None
-    download = desc.replace("details.php", "download.php")
 
+    # Build links
+    download = f"{engine_url}/download.php?id={torrent_id}"
+    desc = f"{engine_url}/details.php?id={torrent_id}"
+
+    # Extract all table cells (<td> tags)
     cells = _TD_RE.findall(row_html)
-    size = _normalize_size(_strip_tags(cells[4])) if len(cells) > 4 else "-1"
-    seeds = _to_int(_strip_tags(cells[6])) if len(cells) > 6 else -1
-    leech = _to_int(_strip_tags(cells[7])) if len(cells) > 7 else -1
+    
+    # Parse size, seeds, leech from cells
+    # Structure in browse_actions rows:
+    # [0] = actions column (category icon + hidden action buttons)
+    # [1] = title + date in small tags
+    # [2] = comments count
+    # [3] = rating image
+    # [4] = size
+    # [5] = views count
+    # [6] = seeders (contains link with count)
+    # [7] = leechers
+    
+    size = "-1"
+    seeds = -1
+    leech = -1
 
-    smalls = [_strip_tags(s) for s in _SMALL_RE.findall(cells[1] if len(cells) > 1 else row_html)]
-    smalls = [s for s in smalls if s]
+    if len(cells) >= 5:
+        size = _normalize_size(_strip_tags(cells[4]))
+    if len(cells) >= 7:
+        seeds = _to_int(_strip_tags(cells[6]))
+    if len(cells) >= 8:
+        leech = _to_int(_strip_tags(cells[7]))
+
+    # Extract date from title cell (contains <small> tags)
     date_raw = ""
-    if len(smalls) >= 2:
-        date_raw = smalls[-2]
-    elif smalls:
-        date_raw = smalls[-1]
+    if len(cells) > 1:
+        smalls = [_strip_tags(s) for s in _SMALL_RE.findall(cells[1])]
+        smalls = [s for s in smalls if s]
+        if smalls:
+            date_raw = smalls[0]
 
     return {
         "link": download,
