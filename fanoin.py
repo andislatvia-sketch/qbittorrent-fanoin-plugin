@@ -1,4 +1,4 @@
-# VERSION: 1.03
+# VERSION: 1.04
 # AUTHORS: Grok, improved by andislatvia-sketch
 # LICENSING INFORMATION
 #
@@ -39,7 +39,7 @@ qBittorrent search-plugin contract and the Jackett indexer definition
   rows         tr.browse_actions
   title        a.tName[href^="details.php?id="]
   download     download.php?id=
-  size         td (5th cell in row)
+  size         td (5th cell in row) - contains value<br>unit
   seeders      td (7th cell - contains a link with seeder count)
   leechers     td (8th cell)
   date         small tag within title cell
@@ -314,10 +314,6 @@ _TNAME_RE = re.compile(
     r"""<a\b[^>]*class=['\"]tName['\"][^>]*href=['\"]details\.php\?id=(\d+)[^'\"]*['\"][^>]*>(.*?)</a>""",
     re.I | re.S,
 )
-_DOWNLOAD_RE = re.compile(
-    r"""<a\b[^>]*href=['\"]download\.php\?id=(\d+)[^'\"]*['\"][^>]*>""",
-    re.I | re.S,
-)
 _SMALL_RE = re.compile(r"<small[^>]*>(.*?)</small>", re.I | re.S)
 _TAG_RE = re.compile(r"<[^>]+>")
 _INT_RE = re.compile(r"-?\d+")
@@ -343,13 +339,44 @@ def _to_int(blob: str) -> int:
 
 
 def _normalize_size(blob: str) -> str:
-    """Normalize torrent size format for parsing."""
-    text = html.unescape(blob).replace("\xa0", " ").strip()
-    if re.match(r"^\d+,\d+\s*[A-Za-z]", text):
-        text = text.replace(",", ".", 1)
-    else:
-        text = text.replace(",", "")
-    return text
+    """Normalize torrent size format for parsing.
+    
+    FANO.IN format: "5.28<br>GB" or "5.28\nGB"
+    We need to extract both number and unit, preserving them together.
+    """
+    # First, remove all HTML tags but preserve spaces/newlines
+    text = html.unescape(blob)
+    # Replace <br> and <br/> with space to join number and unit
+    text = re.sub(r'<br\s*/?>', ' ', text, flags=re.I)
+    # Remove other HTML tags
+    text = _TAG_RE.sub("", text)
+    # Normalize whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    # If empty, return -1
+    if not text:
+        return "-1"
+    
+    # Handle Latvian non-breaking space
+    text = text.replace("\xa0", " ")
+    
+    # Try to parse number,unit format (e.g., "5,28 GB" or "5.28 GB")
+    # Allow for comma as decimal separator
+    match = re.search(r'([\d.,]+)\s*([A-Za-z]+)?', text)
+    if match:
+        number_str = match.group(1)
+        unit = match.group(2) if match.group(2) else ""
+        
+        # Convert comma to period for decimal point (Latvian format uses comma)
+        number_str = number_str.replace(",", ".")
+        
+        # Combine with unit
+        if unit:
+            return f"{number_str}{unit}"
+        else:
+            return number_str
+    
+    return "-1"
 
 
 def parse_pub_date(raw: str) -> int:
@@ -445,7 +472,7 @@ def parse_row(row_html: str, engine_url: str) -> Optional[dict[str, object]]:
     # [1] = title + date in small tags
     # [2] = comments count
     # [3] = rating image
-    # [4] = size
+    # [4] = size (contains value<br>unit, e.g., "5.28<br>GB")
     # [5] = views count
     # [6] = seeders (contains link with count)
     # [7] = leechers
@@ -455,7 +482,7 @@ def parse_row(row_html: str, engine_url: str) -> Optional[dict[str, object]]:
     leech = -1
 
     if len(cells) >= 5:
-        size = _normalize_size(_strip_tags(cells[4]))
+        size = _normalize_size(cells[4])
     if len(cells) >= 7:
         seeds = _to_int(_strip_tags(cells[6]))
     if len(cells) >= 8:
