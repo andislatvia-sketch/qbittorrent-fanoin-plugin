@@ -380,3 +380,243 @@ If you encounter issues:
 **Last Updated:** October 2024  
 **Plugin Version:** 1.01  
 **License:** BSD 3-Clause
+
+Update the plugin later
+Here are the files ready to copy and save.
+
+---
+
+### 1. `README.md`
+
+```markdown
+# qbittorrent-fanoin-plugin
+
+qBittorrent Nova3 search plugin for **FANO.IN** (Latvian private tracker)
+
+**Current version: 1.06**
+
+---
+
+## Quick Install
+
+1. Open qBittorrent → **View → Search Engine**
+2. Click **Search plugins...** → **Install a new one** → **Web link**
+3. Paste this URL:
+
+```
+https://raw.githubusercontent.com/andislatvia-sketch/qbittorrent-fanoin-plugin/main/fanoin.py
+```
+
+4. Create `fanoin.json` next to the plugin (see below)
+5. Restart qBittorrent
+
+---
+
+## Credentials setup (recommended)
+
+Create a file named **`fanoin.json`** in the same folder as `fanoin.py`:
+
+**Windows:**
+```
+%localappdata%\qBittorrent\nova3\engines\
+```
+
+**Linux:**
+```
+~/.local/share/qBittorrent/nova3/engines/
+```
+
+**macOS:**
+```
+~/Library/Application Support/qBittorrent/nova3/engines/
+```
+
+Content of `fanoin.json`:
+
+```json
+{
+  "username": "your_fano_username",
+  "password": "your_fano_password"
+}
+```
+
+---
+
+## Changelog
+
+### v1.06 (2026-10-02)
+- Fixed incorrect cell indexing (size / seeders / leechers)
+- Size is now correctly converted to bytes
+- Leechers no longer show as -1
+
+### v1.05
+- Proper size-to-bytes conversion
+- Better handling of `<br>` and Latvian decimal comma
+
+### v1.04 and earlier
+- Login + cookie persistence
+- Category mapping
+- Date parsing (Šodien / Vakar)
+- Multi-page search
+
+---
+
+## Features
+
+- Login with username/password (via `fanoin.json` or hardcoded)
+- Cookie persistence between sessions
+- Category filters (Movies, TV, Music, Games, Anime, Books, Software)
+- Correct size, seeders and leechers
+- Date parsing (including Latvian “Šodien” / “Vakar”)
+
+---
+
+## Manual update
+
+You can also use the included `fanopyupdate.bat` (Windows) to automatically download the latest version and clear cookies.
+
+---
+
+## License
+
+BSD 3-Clause
+```
+
+---
+
+### 2. `QUICKSTART.md`
+
+```markdown
+# FANO.IN Plugin – Quick Start
+
+## 1. Install the plugin
+
+In qBittorrent:
+
+**View → Search Engine → Search plugins... → Install a new one → Web link**
+
+Paste:
+
+```
+https://raw.githubusercontent.com/andislatvia-sketch/qbittorrent-fanoin-plugin/main/fanoin.py
+```
+
+---
+
+## 2. Add credentials
+
+Go to the engines folder:
+
+- **Windows:** `%localappdata%\qBittorrent\nova3\engines\`
+- **Linux:** `~/.local/share/qBittorrent/nova3/engines/`
+- **macOS:** `~/Library/Application Support/qBittorrent/nova3/engines/`
+
+Create a file named **`fanoin.json`** with this content:
+
+```json
+{
+  "username": "your_fano_username",
+  "password": "your_fano_password"
+}
+```
+
+---
+
+## 3. Restart & test
+
+1. Close qBittorrent completely
+2. Open it again
+3. Go to Search tab
+4. Select **FANO.IN**
+5. Search for something (e.g. `big bang theory`)
+
+If results appear with correct size and seeders/leechers — everything works.
+
+---
+
+## Update the plugin later
+
+Run `fanopyupdate.bat` or simply re-install from the same URL above
+
+BAT script:
+
+@echo off
+setlocal enabledelayedexpansion
+
+set "ENGINES_FOLDER=%LOCALAPPDATA%\qBittorrent\nova3\engines"
+set "PLUGIN_URL=https://raw.githubusercontent.com/andislatvia-sketch/qbittorrent-fanoin-plugin/main/fanoin.py"
+set "PLUGIN_FILE=%ENGINES_FOLDER%\fanoin.py"
+set "BACKUP_FILE=%ENGINES_FOLDER%\fanoin.py.backup"
+set "COOKIES_FILE=%ENGINES_FOLDER%\fanoin.cookies"
+
+echo.
+echo ============================================
+echo FANO.IN Plugin Updater  v1.06
+echo ============================================
+echo.
+
+if not exist "%ENGINES_FOLDER%" (
+    echo ERROR: qBittorrent engines folder not found!
+    echo Expected: %ENGINES_FOLDER%
+    pause
+    exit /b 1
+)
+
+echo [1/5] Checking existing plugin...
+if exist "%PLUGIN_FILE%" (
+    echo [2/5] Creating backup...
+    copy "%PLUGIN_FILE%" "%BACKUP_FILE%" >nul
+    echo       Backup created: fanoin.py.backup
+) else (
+    echo [2/5] No existing plugin found - fresh install
+)
+
+echo [3/5] Downloading latest version from GitHub...
+powershell -Command "try { (New-Object Net.WebClient).DownloadFile('%PLUGIN_URL%', '%PLUGIN_FILE%'); exit 0 } catch { exit 1 }"
+
+if errorlevel 1 (
+    echo ERROR: Download failed!
+    if exist "%BACKUP_FILE%" (
+        echo Restoring backup...
+        copy "%BACKUP_FILE%" "%PLUGIN_FILE%" >nul
+    )
+    pause
+    exit /b 1
+)
+echo       Download successful
+
+echo [4/5] Removing old cookies...
+if exist "%COOKIES_FILE%" (
+    del "%COOKIES_FILE%"
+    echo       Cookies deleted
+) else (
+    echo       No cookies file found
+)
+
+echo [5/5] Done!
+echo.
+echo ============================================
+echo SUCCESS - Plugin updated to latest version
+echo ============================================
+echo.
+echo Location: %PLUGIN_FILE%
+echo.
+echo Next steps:
+echo   1. Close qBittorrent completely
+echo   2. Restart qBittorrent
+echo   3. Test a search
+echo.
+pause
+```
+
+
+v1.06: Fix size, seeders and leechers cell indexing
+
+- Correct cell mapping discovered via debug
+- size  → cells[3]
+- seeds → cells[5]
+- leech → cells[6]
+- Size now properly converted to bytes
+```
+
+---
