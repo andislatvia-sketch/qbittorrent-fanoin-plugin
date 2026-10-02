@@ -1,4 +1,4 @@
-# VERSION: 1.04
+# VERSION: 1.05
 # AUTHORS: Grok, improved by andislatvia-sketch
 # LICENSING INFORMATION
 #
@@ -39,7 +39,7 @@ qBittorrent search-plugin contract and the Jackett indexer definition
   rows         tr.browse_actions
   title        a.tName[href^="details.php?id="]
   download     download.php?id=
-  size         td (5th cell in row) - contains value<br>unit
+  size         td (5th cell in row) - contains value<br>unit  → converted to bytes
   seeders      td (7th cell - contains a link with seeder count)
   leechers     td (8th cell)
   date         small tag within title cell
@@ -338,45 +338,48 @@ def _to_int(blob: str) -> int:
         return -1
 
 
-def _normalize_size(blob: str) -> str:
-    """Normalize torrent size format for parsing.
-    
-    FANO.IN format: "5.28<br>GB" or "5.28\nGB"
-    We need to extract both number and unit, preserving them together.
+def _size_to_bytes(blob: str) -> str:
     """
-    # First, remove all HTML tags but preserve spaces/newlines
-    text = html.unescape(blob)
-    # Replace <br> and <br/> with space to join number and unit
-    text = re.sub(r'<br\s*/?>', ' ', text, flags=re.I)
-    # Remove other HTML tags
-    text = _TAG_RE.sub("", text)
-    # Normalize whitespace
-    text = re.sub(r'\s+', ' ', text).strip()
-    
-    # If empty, return -1
-    if not text:
+    Convert FANO.IN size cell (e.g. "5.28<br>GB" or "1,98 GB") to bytes.
+    Returns the size in bytes as a string (required by prettyPrinter).
+    """
+    if not blob:
         return "-1"
-    
-    # Handle Latvian non-breaking space
+
+    text = html.unescape(blob)
+    # Join number and unit separated by <br>
+    text = re.sub(r"<br\s*/?>", " ", text, flags=re.I)
+    text = _TAG_RE.sub("", text)
     text = text.replace("\xa0", " ")
-    
-    # Try to parse number,unit format (e.g., "5,28 GB" or "5.28 GB")
-    # Allow for comma as decimal separator
-    match = re.search(r'([\d.,]+)\s*([A-Za-z]+)?', text)
-    if match:
-        number_str = match.group(1)
-        unit = match.group(2) if match.group(2) else ""
-        
-        # Convert comma to period for decimal point (Latvian format uses comma)
-        number_str = number_str.replace(",", ".")
-        
-        # Combine with unit
-        if unit:
-            return f"{number_str}{unit}"
-        else:
-            return number_str
-    
-    return "-1"
+    text = re.sub(r"\s+", " ", text).strip()
+
+    # Match number (supports both . and , as decimal) + optional unit
+    match = re.search(r"([\d.,]+)\s*([KMGT]?i?B)?", text, re.I)
+    if not match:
+        return "-1"
+
+    number_str = match.group(1).replace(",", ".")
+    unit = (match.group(2) or "B").upper()
+
+    try:
+        value = float(number_str)
+    except ValueError:
+        return "-1"
+
+    multipliers = {
+        "B": 1,
+        "KB": 1024,
+        "KIB": 1024,
+        "MB": 1024 ** 2,
+        "MIB": 1024 ** 2,
+        "GB": 1024 ** 3,
+        "GIB": 1024 ** 3,
+        "TB": 1024 ** 4,
+        "TIB": 1024 ** 4,
+    }
+
+    size_bytes = int(value * multipliers.get(unit, 1))
+    return str(size_bytes)
 
 
 def parse_pub_date(raw: str) -> int:
@@ -465,24 +468,23 @@ def parse_row(row_html: str, engine_url: str) -> Optional[dict[str, object]]:
 
     # Extract all table cells (<td> tags)
     cells = _TD_RE.findall(row_html)
-    
-    # Parse size, seeds, leech from cells
+
     # Structure in browse_actions rows:
-    # [0] = actions column (category icon + hidden action buttons)
+    # [0] = actions column
     # [1] = title + date in small tags
     # [2] = comments count
     # [3] = rating image
     # [4] = size (contains value<br>unit, e.g., "5.28<br>GB")
     # [5] = views count
-    # [6] = seeders (contains link with count)
+    # [6] = seeders
     # [7] = leechers
-    
+
     size = "-1"
     seeds = -1
     leech = -1
 
     if len(cells) >= 5:
-        size = _normalize_size(cells[4])
+        size = _size_to_bytes(cells[4])
     if len(cells) >= 7:
         seeds = _to_int(_strip_tags(cells[6]))
     if len(cells) >= 8:
